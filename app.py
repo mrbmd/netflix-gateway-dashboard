@@ -108,18 +108,49 @@ def get_link_stats():
         c = conn.cursor()
         
         c.execute("SELECT COUNT(*) FROM links")
-        total = c.fetchone()[0]
+        total = c.fetchone()[0] or 0
         
         c.execute("SELECT COUNT(DISTINCT pc_link) FROM links WHERE pc_link IS NOT NULL")
-        unique = c.fetchone()[0]
+        unique = c.fetchone()[0] or 0
         
         c.execute("SELECT COUNT(*) FROM links WHERE is_duplicate = 1")
-        duplicates = c.fetchone()[0]
+        duplicates = c.fetchone()[0] or 0
         
         conn.close()
         return total, unique, duplicates
     except:
         return 0, 0, 0
+
+def get_duplicate_origin(duplicate_id):
+    """Get the original request info for a duplicate"""
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        c = conn.cursor()
+        c.execute("SELECT request_number, timestamp FROM links WHERE id = ?", (duplicate_id,))
+        result = c.fetchone()
+        conn.close()
+        if result:
+            return result[0], result[1][:10]  # request number, date
+        return None, None
+    except:
+        return None, None
+
+def export_history():
+    """Export link history as CSV"""
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        c = conn.cursor()
+        c.execute("SELECT request_number, timestamp, plan, country, pc_link, mobile_link, is_duplicate FROM links ORDER BY id DESC")
+        data = c.fetchall()
+        conn.close()
+        
+        if data:
+            import pandas as pd
+            df = pd.DataFrame(data, columns=['Request#', 'Timestamp', 'Plan', 'Country', 'PC Link', 'Mobile Link', 'Is Duplicate'])
+            return df.to_csv(index=False)
+        return None
+    except:
+        return None
 
 def clear_history():
     """Clear all link history"""
@@ -437,11 +468,11 @@ def login_page():
             st.error("Invalid username or password.")
 
 # ============================================================
-# Dashboard Page - Clean & Simple
+# Dashboard Page - Enhanced Version
 # ============================================================
 
 def dashboard_page():
-    """Clean dashboard with duplicate detection - Advanced Mode Only"""
+    """Enhanced dashboard with duplicate detection"""
     
     # Initialize database
     if "db_initialized" not in st.session_state:
@@ -451,10 +482,10 @@ def dashboard_page():
     st.title(f"🔗 {APP_NAME}")
     st.caption("Check if backend gives fresh or duplicate links")
     
-    # Get fresh stats EVERY time the page loads
+    # Get fresh stats
     total, unique, duplicates = get_link_stats()
     
-    # Show statistics in 3 columns
+    # Show statistics
     col1, col2, col3 = st.columns(3)
     with col1:
         st.metric("Total Requests", total)
@@ -471,6 +502,7 @@ def dashboard_page():
         st.session_state.pop("result", None)
         st.session_state.pop("is_dup", None)
         st.session_state.pop("duplicate_of", None)
+        st.session_state.pop("request_num", None)
         
         with st.spinner("Checking for links..."):
             result = call_gateway_async()
@@ -487,9 +519,14 @@ def dashboard_page():
                 st.session_state["duplicate_of"] = dup_of
                 st.session_state["request_num"] = request_num
                 
-                # Show ONE clear message
+                # Show status message
                 if is_dup:
                     st.warning("🔄 This is a DUPLICATE link")
+                    # Show when it was first seen
+                    if dup_of:
+                        orig_req, orig_date = get_duplicate_origin(dup_of)
+                        if orig_req:
+                            st.caption(f"📌 First seen in Request #{orig_req}")
                 else:
                     st.success("✅ This is a FRESH NEW link")
             else:
@@ -499,8 +536,13 @@ def dashboard_page():
     if "result" in st.session_state:
         result = st.session_state["result"]
         is_dup = st.session_state.get("is_dup", False)
+        request_num = st.session_state.get("request_num", 0)
         
         st.divider()
+        
+        # Show request number
+        if request_num > 0:
+            st.caption(f"Request #{request_num}")
         
         # Show plan and country
         col1, col2 = st.columns(2)
@@ -510,41 +552,71 @@ def dashboard_page():
             st.metric("Country", result.get("country", "Unknown"))
         
         # Show links
-        st.write("**Desktop Link:**")
+        st.write("**💻 Desktop Link:**")
         if result.get("pc_link"):
             st.code(result["pc_link"], language=None)
         else:
-            st.warning("No desktop link")
+            st.warning("❌ No desktop link available")
         
-        st.write("**Mobile Link:**")
+        st.write("**📱 Mobile Link:**")
         if result.get("mobile_link"):
             st.code(result["mobile_link"], language=None)
         else:
-            st.warning("No mobile link")
+            st.warning("❌ No mobile link available")
         
-        # Show validation status (simple)
+        # Show validation status
         if "validation" in result:
             validation = result["validation"]
             if validation.get("valid", False):
                 st.success("✅ Link validated")
             else:
                 st.warning("⚠️ Link validation failed")
+            
+            # Optional: Show validation details in expander
+            with st.expander("🔍 Validation Details"):
+                if validation.get("positive_matches"):
+                    st.write("**Positive matches found:**")
+                    for match in validation["positive_matches"]:
+                        st.code(match)
+                if validation.get("negative_matches"):
+                    st.write("**Negative matches found:**")
+                    for match in validation["negative_matches"]:
+                        st.code(match)
+                if validation.get("error"):
+                    st.error(f"Error: {validation['error']}")
     
     st.divider()
     
-    # Clear history button
-    if total > 0:
-        col1, col2, col3 = st.columns([3, 1, 3])
-        with col2:
+    # Action buttons row
+    col1, col2, col3 = st.columns([1, 1, 1])
+    
+    with col1:
+        # Export history
+        if total > 0:
+            if st.button("📥 Export CSV", use_container_width=True):
+                csv = export_history()
+                if csv:
+                    st.download_button(
+                        "Download CSV", 
+                        csv, 
+                        f"link_history_{datetime.now().strftime('%Y%m%d')}.csv", 
+                        "text/csv",
+                        key="download_csv"
+                    )
+    
+    with col2:
+        # Clear history
+        if total > 0:
             if st.button("🗑️ Clear History", use_container_width=True):
                 if clear_history():
                     st.success("History cleared!")
                     st.rerun()
     
-    # Logout
-    if st.button("Logout", use_container_width=True):
-        st.session_state.clear()
-        st.rerun()
+    with col3:
+        # Logout
+        if st.button("🚪 Logout", use_container_width=True):
+            st.session_state.clear()
+            st.rerun()
 
 # ============================================================
 # Main Application Flow
