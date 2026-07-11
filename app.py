@@ -3,21 +3,23 @@ import streamlit as st
 
 
 # ============================================================
+# Application Information
+# ============================================================
+
+APP_NAME = "Gateway Dashboard"
+APP_VERSION = "v3"
+REQUEST_TIMEOUT = 30
+
+
+# ============================================================
 # Streamlit Page Configuration
 # ============================================================
 
 st.set_page_config(
-    page_title="Gateway Dashboard",
+    page_title=f"{APP_NAME} {APP_VERSION}",
     page_icon="🔗",
     layout="centered",
 )
-
-
-# ============================================================
-# Application Settings
-# ============================================================
-
-REQUEST_TIMEOUT = 30
 
 
 # ============================================================
@@ -26,22 +28,22 @@ REQUEST_TIMEOUT = 30
 
 def call_gateway():
     """
-    Reads the API URL and authentication token from Streamlit
+    Reads the API URL and authentication key from Streamlit
     Secrets, sends a POST request, and returns the API response.
     """
 
-    # Read private API information from Streamlit Secrets
+    # Read private values from Streamlit Secrets
     api_url = st.secrets["gateway"]["api_url"]
     auth_key = st.secrets["gateway"]["auth_key"]
 
-    # This is how the app authenticates with your API
+    # API authentication headers
     headers = {
         "Authorization": f"Bearer {auth_key}",
         "Content-Type": "application/json",
         "Accept": "application/json",
     }
 
-    # Send request to the API
+    # Send request to the gateway API
     response = requests.post(
         api_url,
         headers=headers,
@@ -49,7 +51,7 @@ def call_gateway():
         timeout=REQUEST_TIMEOUT,
     )
 
-    # Handle authentication errors clearly
+    # Handle API authentication failures
     if response.status_code in (401, 403):
         try:
             error_data = response.json()
@@ -62,10 +64,10 @@ def call_gateway():
 
         raise PermissionError(error_message)
 
-    # Raise an error for other HTTP failures
+    # Raise error for other failed HTTP responses
     response.raise_for_status()
 
-    # Convert API response into a Python dictionary
+    # Convert the API response into JSON
     try:
         data = response.json()
     except ValueError as error:
@@ -73,7 +75,7 @@ def call_gateway():
             "The API returned an invalid JSON response."
         ) from error
 
-    # Check the success value returned by the API
+    # Check API success value
     if not data.get("success"):
         raise ValueError(
             data.get("message", "The API request failed.")
@@ -88,13 +90,12 @@ def call_gateway():
 
 def login_page():
     """
-    Shows the dashboard login screen.
-
-    The entered username and password are compared with the
-    private values stored inside Streamlit Secrets.
+    Displays the login page and checks the entered credentials
+    against values stored in Streamlit Secrets.
     """
 
-    st.title("🔐 Login")
+    st.title(f"🔐 {APP_NAME}")
+    st.info(f"Running Version: {APP_VERSION}")
     st.caption("Sign in to access the dashboard.")
 
     with st.form("login_form"):
@@ -126,8 +127,7 @@ def login_page():
 
 def display_result(data):
     """
-    Displays plan, country, desktop link and mobile link returned
-    by the API.
+    Displays the API response returned by the gateway.
     """
 
     st.divider()
@@ -150,6 +150,7 @@ def display_result(data):
             value=data.get("country", "Unknown"),
         )
 
+    # Desktop link
     st.write("### 💻 Desktop Link")
 
     pc_link = data.get("pc_link")
@@ -163,6 +164,7 @@ def display_result(data):
     else:
         st.warning("Desktop link was not returned by the API.")
 
+    # Mobile link
     st.write("### 📱 Mobile Link")
 
     mobile_link = data.get("mobile_link")
@@ -183,10 +185,11 @@ def display_result(data):
 
 def dashboard_page():
     """
-    Shows the main dashboard after successful login.
+    Displays the main dashboard after successful login.
     """
 
-    st.title("🔗 Gateway Dashboard")
+    st.title(f"🔗 {APP_NAME}")
+    st.info(f"Running Version: {APP_VERSION}")
     st.caption("Generate desktop and mobile links.")
 
     if st.button(
@@ -194,14 +197,14 @@ def dashboard_page():
         use_container_width=True,
         type="primary",
     ):
-        # Remove previous result before sending a new request
+        # Remove old result before sending a new request
         st.session_state.pop("gateway_result", None)
 
         try:
             with st.spinner("Sending request to the gateway..."):
                 result = call_gateway()
 
-            # Save result only in the current browser session
+            # Store result only in the current browser session
             st.session_state["gateway_result"] = result
 
         except PermissionError as error:
@@ -237,7 +240,7 @@ def dashboard_page():
         except Exception as error:
             st.error(f"Unexpected error: {error}")
 
-    # Show the result after a successful API request
+    # Show result after successful API call
     if "gateway_result" in st.session_state:
         display_result(
             st.session_state["gateway_result"]
@@ -249,7 +252,7 @@ def dashboard_page():
         "Logout",
         use_container_width=True,
     ):
-        # Remove login and API result from the current session
+        # Clear login and API result from session
         st.session_state.clear()
         st.rerun()
 
@@ -260,8 +263,8 @@ def dashboard_page():
 
 def main():
     """
-    Decides whether the user should see the login page or the
-    dashboard.
+    Shows either the login page or dashboard based on the
+    current session state.
     """
 
     if "logged_in" not in st.session_state:
