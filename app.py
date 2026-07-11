@@ -4,7 +4,6 @@ import aiohttp
 import asyncio
 import re
 import sqlite3
-import json
 from datetime import datetime
 from typing import Tuple, Dict, Any
 
@@ -64,7 +63,6 @@ def save_link_data(data, request_number):
         pc_link = data.get("pc_link")
         mobile_link = data.get("mobile_link")
         
-        # Check if this link already exists
         is_duplicate = False
         duplicate_of = None
         
@@ -72,21 +70,13 @@ def save_link_data(data, request_number):
             conn = sqlite3.connect(DB_FILE)
             c = conn.cursor()
             
-            # Check for duplicate PC link
-            c.execute("SELECT id, request_number FROM links WHERE pc_link = ?", (pc_link,))
-            pc_result = c.fetchone()
+            # Check for duplicate
+            c.execute("SELECT id, request_number FROM links WHERE pc_link = ? OR mobile_link = ?", (pc_link, mobile_link))
+            result = c.fetchone()
             
-            # Check for duplicate Mobile link
-            c.execute("SELECT id, request_number FROM links WHERE mobile_link = ?", (mobile_link,))
-            mobile_result = c.fetchone()
-            
-            if pc_result or mobile_result:
+            if result:
                 is_duplicate = True
-                # Use the first duplicate found
-                if pc_result:
-                    duplicate_of = pc_result[0]
-                elif mobile_result:
-                    duplicate_of = mobile_result[0]
+                duplicate_of = result[0]
             
             # Insert the new record
             c.execute("""INSERT INTO links 
@@ -109,7 +99,6 @@ def save_link_data(data, request_number):
         
         return False, None
     except Exception as e:
-        st.error(f"Failed to save: {e}")
         return False, None
 
 def get_link_stats():
@@ -118,40 +107,19 @@ def get_link_stats():
         conn = sqlite3.connect(DB_FILE)
         c = conn.cursor()
         
-        # Total requests
         c.execute("SELECT COUNT(*) FROM links")
         total = c.fetchone()[0]
         
-        # Unique links
         c.execute("SELECT COUNT(DISTINCT pc_link) FROM links WHERE pc_link IS NOT NULL")
         unique = c.fetchone()[0]
         
-        # Duplicate count
         c.execute("SELECT COUNT(*) FROM links WHERE is_duplicate = 1")
         duplicates = c.fetchone()[0]
         
-        # Get last 5 requests
-        c.execute("""SELECT id, timestamp, request_number, plan, country, 
-                     pc_link, mobile_link, is_duplicate, duplicate_of 
-                     FROM links ORDER BY id DESC LIMIT 5""")
-        recent = c.fetchall()
-        
         conn.close()
-        return total, unique, duplicates, recent
+        return total, unique, duplicates
     except:
-        return 0, 0, 0, []
-
-def get_duplicate_details(duplicate_of_id):
-    """Get details of the original link"""
-    try:
-        conn = sqlite3.connect(DB_FILE)
-        c = conn.cursor()
-        c.execute("SELECT request_number, timestamp, plan, country FROM links WHERE id = ?", (duplicate_of_id,))
-        result = c.fetchone()
-        conn.close()
-        return result
-    except:
-        return None
+        return 0, 0, 0
 
 def clear_history():
     """Clear all link history"""
@@ -374,7 +342,7 @@ st.set_page_config(
 )
 
 # ============================================================
-# Call Gateway API (Synchronous - Original Method)
+# Call Gateway API (Synchronous - Fallback)
 # ============================================================
 
 def call_gateway():
@@ -469,218 +437,105 @@ def login_page():
             st.error("Invalid username or password.")
 
 # ============================================================
-# Display Link Status (NEW - Duplicate Detection)
-# ============================================================
-
-def display_link_status():
-    """Show link statistics and duplicate detection"""
-    
-    total, unique, duplicates, recent = get_link_stats()
-    
-    st.divider()
-    st.subheader("🔗 Link Status")
-    
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        st.metric("Total Requests", total)
-    
-    with col2:
-        st.metric("Unique Links", unique, delta=f"+{unique}" if unique > 0 else "0")
-    
-    with col3:
-        duplicate_percentage = (duplicates / total * 100) if total > 0 else 0
-        st.metric("Duplicate Links", duplicates, 
-                  delta=f"{duplicate_percentage:.1f}%" if duplicates > 0 else "0%")
-    
-    # Show recent requests with duplicate status
-    if recent:
-        st.write("**Last 5 Requests:**")
-        for row in recent:
-            id_num, timestamp, req_num, plan, country, pc_link, mobile_link, is_dup, dup_of = row
-            
-            # Determine status
-            if is_dup:
-                status = "🔄 DUPLICATE"
-                color = "orange"
-                # Get original request info
-                original = get_duplicate_details(dup_of)
-                if original:
-                    orig_req, orig_time, orig_plan, orig_country = original
-                    detail = f"(Same as Request #{orig_req} from {orig_time[:10]})"
-                else:
-                    detail = ""
-            else:
-                status = "✅ NEW LINK"
-                color = "green"
-                detail = ""
-            
-            # Display with color coding
-            col1, col2, col3, col4 = st.columns([1, 2, 2, 3])
-            with col1:
-                st.write(f"**#{req_num}**")
-            with col2:
-                st.write(f"🕐 {timestamp[11:16]}")
-            with col3:
-                st.write(f"{plan} | {country}")
-            with col4:
-                if is_dup:
-                    st.warning(f"🔄 DUPLICATE {detail}")
-                else:
-                    st.success("✅ NEW LINK")
-    
-    # Add clear history button
-    if total > 0:
-        if st.button("🗑️ Clear History", key="clear_history"):
-            if clear_history():
-                st.success("History cleared!")
-                st.rerun()
-
-# ============================================================
-# Display API Result (Modified with duplicate detection)
-# ============================================================
-
-def display_result(data, is_duplicate=False, duplicate_of=None):
-    """Display API result with duplicate detection"""
-    
-    st.divider()
-    
-    # Show duplicate status first (most important)
-    if is_duplicate:
-        st.warning("⚠️ **This is a DUPLICATE link!**")
-        if duplicate_of:
-            original = get_duplicate_details(duplicate_of)
-            if original:
-                orig_req, orig_time, orig_plan, orig_country = original
-                st.info(f"📌 This link was first seen in Request #{orig_req} on {orig_time[:10]}")
-        st.info("💡 The backend is giving you the SAME link again!")
-    else:
-        st.success("🎉 **This is a FRESH NEW link!**")
-        st.info("💡 The backend gave you a UNIQUE link that hasn't been seen before!")
-    
-    if data.get("success", False):
-        st.success(data.get("message", "Links generated successfully."))
-        
-        plan_column, country_column = st.columns(2)
-        with plan_column:
-            st.metric(label="Plan", value=data.get("plan", "Unknown"))
-        with country_column:
-            st.metric(label="Country", value=data.get("country", "Unknown"))
-        
-        if "validation" in data:
-            validation = data["validation"]
-            if validation.get("valid", False):
-                st.success("✅ Link Validation Passed!")
-            else:
-                st.warning("⚠️ Link Validation Failed")
-            
-            with st.expander("🔍 Validation Details"):
-                if validation.get("positive_matches"):
-                    st.write("**Positive Matches Found:**")
-                    for match in validation["positive_matches"]:
-                        st.code(match)
-                
-                if validation.get("negative_matches"):
-                    st.write("**Negative Matches Found:**")
-                    for match in validation["negative_matches"]:
-                        st.code(match)
-                
-                if "error" in validation:
-                    st.error(f"Validation Error: {validation['error']}")
-
-        st.write("### 💻 Desktop Link")
-        pc_link = data.get("pc_link")
-        if pc_link:
-            st.code(pc_link, language=None, wrap_lines=True)
-        else:
-            st.warning("Desktop link was not returned by the API.")
-
-        st.write("### 📱 Mobile Link")
-        mobile_link = data.get("mobile_link")
-        if mobile_link:
-            st.code(mobile_link, language=None, wrap_lines=True)
-        else:
-            st.warning("Mobile link was not returned by the API.")
-    else:
-        st.error(data.get("message", "Failed to generate links."))
-
-# ============================================================
-# Dashboard Page (Modified - Advanced Mode Only)
+# Dashboard Page - Clean & Simple
 # ============================================================
 
 def dashboard_page():
-    """Displays the dashboard with duplicate detection - Advanced Mode Only"""
+    """Clean dashboard with duplicate detection - Advanced Mode Only"""
     
-    # Initialize database if not already done
+    # Initialize database
     if "db_initialized" not in st.session_state:
         if init_db():
             st.session_state["db_initialized"] = True
     
     st.title(f"🔗 {APP_NAME}")
-    st.info(f"Running Version: {APP_VERSION}")
-    st.caption("Generate and track links - Advanced Mode with Duplicate Detection")
+    st.caption("Check if backend gives fresh or duplicate links")
     
-    # Display link status
-    display_link_status()
+    # Show statistics in 3 columns
+    total, unique, duplicates = get_link_stats()
     
-    # Check if advanced mode is available
-    if not BEAUTIFULSOUP_AVAILABLE:
-        st.warning("⚠️ BeautifulSoup not available. Please install: pip install beautifulsoup4")
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric("Total Requests", total)
+    with col2:
+        st.metric("Unique Links", unique)
+    with col3:
+        dup_percent = (duplicates / total * 100) if total > 0 else 0
+        st.metric("Duplicates", f"{duplicates} ({dup_percent:.0f}%)")
     
-    # Single button for Advanced Mode only
-    if st.button("🚀 Generate & Check Link", use_container_width=True, type="primary"):
-        st.session_state.pop("gateway_result", None)
-        st.session_state.pop("is_duplicate", None)
-        st.session_state.pop("duplicate_of", None)
-
-        try:
-            with st.spinner("Launching batch workers for link validation..."):
-                result = call_gateway_async()
-                
-                if result:
-                    st.session_state["gateway_result"] = result
-                    
-                    # Check for duplicates
-                    request_num = get_link_stats()[0] + 1
-                    is_dup, dup_of = save_link_data(result, request_num)
-                    
-                    st.session_state["is_duplicate"] = is_dup
-                    st.session_state["duplicate_of"] = dup_of
-                    
-                    if is_dup:
-                        st.warning("🔄 DUPLICATE DETECTED! The backend gave the same link again.")
-                    else:
-                        st.balloons()
-                        st.success("🎉 FRESH NEW LINK! The backend gave a unique link!")
-                else:
-                    st.error("No valid link could be obtained after all attempts.")
-
-        except PermissionError as error:
-            st.error(f"Authentication error: {error}")
-        except requests.exceptions.Timeout:
-            st.error("The API request timed out. Please try again.")
-        except requests.exceptions.ConnectionError:
-            st.error("Could not connect to the API server.")
-        except requests.exceptions.HTTPError as error:
-            status_code = error.response.status_code if error.response is not None else "Unknown"
-            st.error(f"The API returned HTTP status {status_code}.")
-        except ValueError as error:
-            st.error(str(error))
-        except requests.exceptions.RequestException as error:
-            st.error(f"Request failed: {error}")
-        except Exception as error:
-            st.error(f"Unexpected error: {error}")
-    
-    # Show result after successful API call
-    if "gateway_result" in st.session_state:
-        display_result(
-            st.session_state["gateway_result"],
-            st.session_state.get("is_duplicate", False),
-            st.session_state.get("duplicate_of", None)
-        )
-
     st.divider()
-
+    
+    # Generate button
+    if st.button("🚀 Generate & Check", use_container_width=True, type="primary"):
+        st.session_state.pop("result", None)
+        st.session_state.pop("is_dup", None)
+        
+        with st.spinner("Checking for links..."):
+            result = call_gateway_async()
+            
+            if result:
+                request_num = total + 1
+                is_dup, dup_of = save_link_data(result, request_num)
+                
+                st.session_state["result"] = result
+                st.session_state["is_dup"] = is_dup
+                
+                # Show ONE clear message
+                if is_dup:
+                    st.warning("🔄 This is a DUPLICATE link - Backend gave the same link again")
+                else:
+                    st.success("✅ This is a FRESH NEW link - Backend gave a unique link")
+                    st.balloons()
+            else:
+                st.error("Failed to get a valid link")
+    
+    # Show result
+    if "result" in st.session_state:
+        result = st.session_state["result"]
+        is_dup = st.session_state.get("is_dup", False)
+        
+        st.divider()
+        
+        # Show plan and country
+        col1, col2 = st.columns(2)
+        with col1:
+            st.metric("Plan", result.get("plan", "Unknown"))
+        with col2:
+            st.metric("Country", result.get("country", "Unknown"))
+        
+        # Show links
+        st.write("**Desktop Link:**")
+        if result.get("pc_link"):
+            st.code(result["pc_link"], language=None)
+        else:
+            st.warning("No desktop link")
+        
+        st.write("**Mobile Link:**")
+        if result.get("mobile_link"):
+            st.code(result["mobile_link"], language=None)
+        else:
+            st.warning("No mobile link")
+        
+        # Show validation status (simple)
+        if "validation" in result:
+            validation = result["validation"]
+            if validation.get("valid", False):
+                st.success("✅ Link validated")
+            else:
+                st.warning("⚠️ Link validation failed")
+    
+    st.divider()
+    
+    # Clear history button
+    if total > 0:
+        col1, col2, col3 = st.columns([3, 1, 3])
+        with col2:
+            if st.button("🗑️ Clear History", use_container_width=True):
+                if clear_history():
+                    st.success("History cleared!")
+                    st.rerun()
+    
+    # Logout
     if st.button("Logout", use_container_width=True):
         st.session_state.clear()
         st.rerun()
