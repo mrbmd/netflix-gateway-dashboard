@@ -168,7 +168,7 @@ def clear_history():
 # Application Information
 # ============================================================
 
-APP_NAME = "🔗 Link Tester"
+APP_NAME = "Link Tester"
 APP_VERSION = "v3"
 REQUEST_TIMEOUT = 30
 
@@ -449,12 +449,12 @@ def call_gateway_async():
 
 def login_page():
     st.title("🔐 Link Tester")
-    st.markdown("### Sign in to access the dashboard")
-    
+    st.caption("Sign in to access the dashboard")
+
     with st.form("login_form"):
-        username = st.text_input("Username", placeholder="Enter your username")
-        password = st.text_input("Password", type="password", placeholder="Enter your password")
-        login_clicked = st.form_submit_button("🔐 Login", use_container_width=True, type="primary")
+        username = st.text_input("Username")
+        password = st.text_input("Password", type="password")
+        login_clicked = st.form_submit_button("Login", use_container_width=True)
 
     if login_clicked:
         correct_username = st.secrets["auth"]["username"]
@@ -464,170 +464,127 @@ def login_page():
             st.session_state["logged_in"] = True
             st.rerun()
         else:
-            st.error("❌ Invalid username or password.")
+            st.error("Invalid username or password.")
 
 # ============================================================
-# Dashboard Page - Improved UI
+# Dashboard Page - Simple & Clean
 # ============================================================
 
 def dashboard_page():
-    """Enhanced dashboard with better UI"""
+    """Simple dashboard with duplicate detection"""
     
     # Initialize database
     if "db_initialized" not in st.session_state:
         if init_db():
             st.session_state["db_initialized"] = True
     
-    # Header with emoji
     st.title("🔗 Link Tester")
-    st.markdown("*Check if your backend gives fresh or duplicate links*")
-    st.divider()
+    st.caption("Check if backend gives fresh or duplicate links")
     
     # Get fresh stats
     total, unique, duplicates = get_link_stats()
     
-    # Statistics Cards with better styling
-    st.markdown("### 📊 Statistics")
+    # Statistics in 3 columns
     col1, col2, col3 = st.columns(3)
-    
     with col1:
-        st.markdown(f"""
-        <div style="background-color: #f0f2f6; padding: 15px; border-radius: 10px; text-align: center;">
-            <h3 style="margin: 0; color: #1f77b4;">{total}</h3>
-            <p style="margin: 0; color: #666;">Total Requests</p>
-        </div>
-        """, unsafe_allow_html=True)
-    
+        st.metric("Total Requests", total)
     with col2:
-        st.markdown(f"""
-        <div style="background-color: #f0f2f6; padding: 15px; border-radius: 10px; text-align: center;">
-            <h3 style="margin: 0; color: #2ca02c;">{unique}</h3>
-            <p style="margin: 0; color: #666;">Unique Links</p>
-        </div>
-        """, unsafe_allow_html=True)
-    
+        st.metric("Unique Links", unique)
     with col3:
         dup_percent = (duplicates / total * 100) if total > 0 else 0
-        color = "#d62728" if dup_percent > 50 else "#ff7f0e"
-        st.markdown(f"""
-        <div style="background-color: #f0f2f6; padding: 15px; border-radius: 10px; text-align: center;">
-            <h3 style="margin: 0; color: {color};">{duplicates} ({dup_percent:.0f}%)</h3>
-            <p style="margin: 0; color: #666;">Duplicates</p>
-        </div>
-        """, unsafe_allow_html=True)
+        st.metric("Duplicates", f"{duplicates} ({dup_percent:.0f}%)")
     
     st.divider()
     
-    # Generate Section
-    st.markdown("### 🚀 Generate New Link")
-    
-    col1, col2, col3 = st.columns([1, 2, 1])
-    with col2:
-        if st.button("🔍 Check for New Link", use_container_width=True, type="primary"):
-            st.session_state.pop("result", None)
-            st.session_state.pop("is_dup", None)
-            st.session_state.pop("duplicate_of", None)
-            st.session_state.pop("request_num", None)
+    # Generate button
+    if st.button("🔍 Check for New Link", use_container_width=True, type="primary"):
+        st.session_state.pop("result", None)
+        st.session_state.pop("is_dup", None)
+        st.session_state.pop("duplicate_of", None)
+        st.session_state.pop("request_num", None)
+        
+        with st.spinner("Searching for links..."):
+            result = call_gateway_async()
             
-            with st.spinner("Searching for links..."):
-                result = call_gateway_async()
+            if result:
+                current_total = get_link_stats()[0]
+                request_num = current_total + 1
                 
-                if result:
-                    current_total = get_link_stats()[0]
-                    request_num = current_total + 1
-                    
-                    is_dup, dup_of = save_link_data(result, request_num)
-                    
-                    st.session_state["result"] = result
-                    st.session_state["is_dup"] = is_dup
-                    st.session_state["duplicate_of"] = dup_of
-                    st.session_state["request_num"] = request_num
-                    
-                    # Show status with better styling
-                    if is_dup:
-                        st.error("🔄 **DUPLICATE DETECTED**")
-                        if dup_of:
-                            orig_req, orig_date = get_duplicate_origin(dup_of)
-                            if orig_req:
-                                st.info(f"📌 First seen in **Request #{orig_req}**")
-                    else:
-                        st.success("✅ **NEW LINK FOUND!**")
+                is_dup, dup_of = save_link_data(result, request_num)
+                
+                st.session_state["result"] = result
+                st.session_state["is_dup"] = is_dup
+                st.session_state["duplicate_of"] = dup_of
+                st.session_state["request_num"] = request_num
+                
+                if is_dup:
+                    st.warning("🔄 This is a DUPLICATE link")
+                    if dup_of:
+                        orig_req, orig_date = get_duplicate_origin(dup_of)
+                        if orig_req:
+                            st.caption(f"First seen in Request #{orig_req}")
                 else:
-                    st.error("❌ Failed to get a valid link")
+                    st.success("✅ This is a FRESH NEW link")
+            else:
+                st.error("Failed to get a valid link")
     
-    # Result Section
+    # Show result
     if "result" in st.session_state:
         result = st.session_state["result"]
         is_dup = st.session_state.get("is_dup", False)
         request_num = st.session_state.get("request_num", 0)
         
         st.divider()
-        st.markdown("### 📋 Link Details")
         
-        # Request number badge
+        # Request number
         if request_num > 0:
             st.caption(f"Request #{request_num}")
         
-        # Plan and Country in a nice box
+        # Plan and Country
         col1, col2 = st.columns(2)
         with col1:
-            st.markdown(f"""
-            <div style="background-color: #e8f4f8; padding: 10px; border-radius: 8px;">
-                <b>📋 Plan</b><br>
-                {result.get("plan", "Unknown")}
-            </div>
-            """, unsafe_allow_html=True)
+            st.metric("Plan", result.get("plan", "Unknown"))
         with col2:
-            st.markdown(f"""
-            <div style="background-color: #e8f4f8; padding: 10px; border-radius: 8px;">
-                <b>🌍 Country</b><br>
-                {result.get("country", "Unknown")}
-            </div>
-            """, unsafe_allow_html=True)
+            st.metric("Country", result.get("country", "Unknown"))
         
-        # Links with copy buttons
-        st.markdown("#### 💻 Desktop Link")
+        # Desktop Link
+        st.write("**Desktop Link:**")
         if result.get("pc_link"):
             st.code(result["pc_link"], language=None)
-            # Copy button (visual only)
-            st.caption("📋 Click the link to select and copy")
         else:
-            st.warning("❌ No desktop link available")
+            st.warning("No desktop link")
         
-        st.markdown("#### 📱 Mobile Link")
+        # Mobile Link
+        st.write("**Mobile Link:**")
         if result.get("mobile_link"):
             st.code(result["mobile_link"], language=None)
-            st.caption("📋 Click the link to select and copy")
         else:
-            st.warning("❌ No mobile link available")
+            st.warning("No mobile link")
         
-        # Validation status with better visual
+        # Validation status
         if "validation" in result:
             validation = result["validation"]
             if validation.get("valid", False):
-                st.success("✅ **Link Validated** - Page contains expected content")
+                st.success("✅ Link validated")
             else:
-                st.warning("⚠️ **Link Validation Warning** - Page may not be working correctly")
+                st.warning("⚠️ Link validation failed")
             
-            # Show validation details in a cleaner expander
-            with st.expander("🔍 Show Validation Details"):
+            # Validation details (optional)
+            with st.expander("Validation Details"):
                 if validation.get("positive_matches"):
-                    st.write("**✅ Positive matches found:**")
+                    st.write("Positive matches:")
                     for match in validation["positive_matches"]:
-                        st.code(f"✓ {match}")
+                        st.code(match)
                 if validation.get("negative_matches"):
-                    st.write("**❌ Negative matches found:**")
+                    st.write("Negative matches:")
                     for match in validation["negative_matches"]:
-                        st.code(f"✗ {match}")
+                        st.code(match)
                 if validation.get("error"):
                     st.error(f"Error: {validation['error']}")
-                if not validation.get("positive_matches") and not validation.get("negative_matches"):
-                    st.info("No patterns found")
     
     st.divider()
     
-    # Action Buttons
-    st.markdown("### ⚙️ Actions")
+    # Action buttons
     col1, col2, col3 = st.columns(3)
     
     with col1:
@@ -646,7 +603,7 @@ def dashboard_page():
         if total > 0:
             if st.button("🗑️ Clear History", use_container_width=True):
                 if clear_history():
-                    st.success("✅ History cleared!")
+                    st.success("History cleared!")
                     st.rerun()
     
     with col3:
