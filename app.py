@@ -2,9 +2,8 @@ import requests
 import streamlit as st
 import aiohttp
 import asyncio
-import random
 import re
-from typing import Optional, Tuple, Dict, Any
+from typing import Tuple, Dict, Any
 
 # ============================================================
 # Optional Imports with Fallback
@@ -90,7 +89,7 @@ NEGATIVE_PATTERNS = re.compile(
 BATCH_SIZE = 10
 MAX_BATCHES = 3
 
-async def verify_link_async(session: aiohttp.ClientSession, url: str, proxy: Optional[str] = None) -> Tuple[bool, Dict[str, Any]]:
+async def verify_link_async(session: aiohttp.ClientSession, url: str) -> Tuple[bool, Dict[str, Any]]:
     """
     Returns (is_valid, debug_info) where debug_info contains positive and negative matches for proof display.
     """
@@ -106,9 +105,7 @@ async def verify_link_async(session: aiohttp.ClientSession, url: str, proxy: Opt
             "timeout": aiohttp.ClientTimeout(total=15),
             "allow_redirects": True
         }
-        if proxy:
-            kwargs["proxy"] = proxy
-            
+        
         async with session.get(url, **kwargs) as resp:
             if resp.status != 200:
                 return False, debug
@@ -166,10 +163,10 @@ async def verify_link_async(session: aiohttp.ClientSession, url: str, proxy: Opt
         return False, debug
 
 # ============================================================
-# Async Link Extraction
+# Async Link Extraction (Simplified - No Proxy)
 # ============================================================
 
-async def grab_link_worker(session: aiohttp.ClientSession, worker_id: int, stop_event: asyncio.Event, result_holder: list, proxy: Optional[str] = None):
+async def grab_link_worker(session: aiohttp.ClientSession, worker_id: int, stop_event: asyncio.Event, result_holder: list):
     """Worker to fetch and validate links."""
     try:
         # Use the original method to get credentials from secrets
@@ -181,7 +178,7 @@ async def grab_link_worker(session: aiohttp.ClientSession, worker_id: int, stop_
             "Content-Type": "application/json"
         }
         
-        async with session.post(api_url, headers=headers, timeout=aiohttp.ClientTimeout(total=15), proxy=proxy) as resp:
+        async with session.post(api_url, headers=headers, timeout=aiohttp.ClientTimeout(total=15)) as resp:
             if resp.status != 200:
                 raise Exception(f"HTTP {resp.status}")
             
@@ -190,7 +187,7 @@ async def grab_link_worker(session: aiohttp.ClientSession, worker_id: int, stop_
             if data.get("success") and data.get("plan", "").lower() == "premium":
                 mobile_link = data.get("mobile_link")
                 if mobile_link:
-                    is_valid, debug = await verify_link_async(session, mobile_link, proxy)
+                    is_valid, debug = await verify_link_async(session, mobile_link)
                     # Store validation results in data
                     data['validation'] = {
                         'positive_matches': debug.get('positive_matches', [])[:5],
@@ -216,7 +213,7 @@ async def async_link_extraction():
             tasks = []
             for i in range(BATCH_SIZE):
                 tasks.append(asyncio.create_task(
-                    grab_link_worker(session, i+1, stop_event, result_holder, None)
+                    grab_link_worker(session, i+1, stop_event, result_holder)
                 ))
             
             # Wait for first result or timeout
@@ -319,8 +316,7 @@ def call_gateway_async():
     try:
         # Check if required dependencies are available
         if not BEAUTIFULSOUP_AVAILABLE:
-            st.warning("Advanced validation mode requires 'beautifulsoup4'. Installing optional dependencies...")
-            # Try to run without validation
+            st.warning("Advanced validation mode requires 'beautifulsoup4'. Using standard mode.")
             return call_gateway()
         
         # Run the async function
@@ -345,7 +341,7 @@ def call_gateway_async():
         return call_gateway()
 
 # ============================================================
-# Login Page
+# Login Page (Unchanged)
 # ============================================================
 
 def login_page():
