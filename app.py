@@ -451,9 +451,10 @@ def dashboard_page():
     st.title(f"🔗 {APP_NAME}")
     st.caption("Check if backend gives fresh or duplicate links")
     
-    # Show statistics in 3 columns
+    # Get fresh stats EVERY time the page loads
     total, unique, duplicates = get_link_stats()
     
+    # Show statistics in 3 columns
     col1, col2, col3 = st.columns(3)
     with col1:
         st.metric("Total Requests", total)
@@ -469,23 +470,28 @@ def dashboard_page():
     if st.button("🚀 Generate & Check", use_container_width=True, type="primary"):
         st.session_state.pop("result", None)
         st.session_state.pop("is_dup", None)
+        st.session_state.pop("duplicate_of", None)
         
         with st.spinner("Checking for links..."):
             result = call_gateway_async()
             
             if result:
-                request_num = total + 1
+                # Get current count BEFORE saving
+                current_total = get_link_stats()[0]
+                request_num = current_total + 1
+                
                 is_dup, dup_of = save_link_data(result, request_num)
                 
                 st.session_state["result"] = result
                 st.session_state["is_dup"] = is_dup
+                st.session_state["duplicate_of"] = dup_of
+                st.session_state["request_num"] = request_num
                 
                 # Show ONE clear message
                 if is_dup:
-                    st.warning("🔄 This is a DUPLICATE link - Backend gave the same link again")
+                    st.warning("🔄 This is a DUPLICATE link")
                 else:
-                    st.success("✅ This is a FRESH NEW link - Backend gave a unique link")
-                    st.balloons()
+                    st.success("✅ This is a FRESH NEW link")
             else:
                 st.error("Failed to get a valid link")
     
